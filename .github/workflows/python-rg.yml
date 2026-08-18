@@ -1,14 +1,18 @@
-name: Python Resmi Gazete Smoke
+name: ATEZ Resmi Gazete Fetch
 
 on:
   pull_request:
     branches: [main]
+    paths:
+      - 'python/**'
+      - '.github/workflows/python-rg.yml'
+  schedule:
+    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       date:
-        description: 'Target date YYYY-MM-DD'
+        description: 'Target date YYYY-MM-DD (blank = today in Europe/Istanbul)'
         required: false
-        default: '2026-08-18'
         type: string
 
 permissions:
@@ -23,19 +27,31 @@ jobs:
         with:
           python-version: '3.13'
       - run: pip install requests beautifulsoup4 pytest
+
       - name: Unit tests
         working-directory: python
         run: pytest -q
+
+      - name: Resolve Turkey target date
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            echo "TARGET_DATE=${{ inputs.date }}" >> "$GITHUB_ENV"
+          else
+            echo "TARGET_DATE=$(TZ=Europe/Istanbul date +%F)" >> "$GITHUB_ENV"
+          fi
+
       - name: Fetch Resmi Gazete
+        if: github.event_name != 'pull_request'
         working-directory: python
-        env:
-          TARGET_DATE: ${{ inputs.date || '2026-08-18' }}
         run: python rg_fetch.py "$TARGET_DATE"
-      - name: Upload Python scraper evidence
-        if: always()
+
+      - name: Upload Resmi Gazete evidence
+        if: github.event_name != 'pull_request' && always()
         uses: actions/upload-artifact@v6
         with:
-          name: python-rg-${{ github.run_id }}
+          name: resmi-gazete-${{ github.run_id }}
           path: python/out/
           if-no-files-found: warn
           retention-days: 14

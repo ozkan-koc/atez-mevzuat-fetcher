@@ -1,29 +1,30 @@
-# ATEZ Mevzuat Fetcher — Design
+# ATEZ Collector v1 — Architecture
 
-## Goal
-Build a zero-cost daily fetcher that runs in GitHub Actions, retrieves the current Resmî Gazete publication set and probes mevzuat.gov.tr, saves raw HTML/PDF plus detailed machine-readable logs, and optionally uploads the run into the existing Google Drive ATEZ-Mevzuat-Radari structure.
+## Responsibility
 
-## Architecture
-- Runtime: GitHub Actions on ubuntu-latest.
-- Language: Node.js + TypeScript.
-- Fetch strategy: normal `fetch()` first; Playwright/Chromium fallback for HTML when normal fetch fails or returns an unusable response.
-- Sources: `resmigazete.gov.tr` daily index + resolved document URLs, and `mevzuat.gov.tr` reachability/content probe.
-- Output: `out/YYYY-MM-DD/` with `discovery-manifest.json`, `fetch-manifest.json`, `fetch-log.txt`, and `raw/` files.
-- Google Drive: optional upload when `GDRIVE_SERVICE_ACCOUNT_JSON` is configured. Target root defaults to the existing ATEZ-Mevzuat-Radari folder ID and creates/uses `runs/YYYY-MM-DD/sources` and `logs`.
-- GitHub artifact upload always runs so a failed Drive upload never loses fetched evidence.
+The repository is a deterministic evidence collector. GitHub Actions schedules it and returns an artifact. Downstream scheduled-task skills archive, analyze, publish, revise, and deliver; those concerns do not belong in this codebase.
 
-## Logging contract
-Every request records: source URL, source type, method (`fetch` or `playwright`), started/finished timestamps, HTTP status when available, final URL, content type, byte count, local output path, success/failure, fallback reason, and error text.
+## Modules
 
-## Safety and correctness
-- Third-party discovery sources are not used by the fetcher as legal evidence.
-- The fetcher does not perform AI analysis or legal classification.
-- Raw official source bytes are preserved as received.
-- A failed direct request is visible in the manifest even when Playwright succeeds.
-- If exact official content cannot be fetched, the run is marked partial/blocked rather than inventing data.
+- `config.py`: stable runtime constants and source allowlists.
+- `http_client.py`: request evidence and explicit TLS fallback logging.
+- `official/discovery.py`: same-date official-link discovery.
+- `official/validation.py`: final-host, content-type, and byte-signature checks.
+- `official/downloader.py`: validated official downloads.
+- `supporting/`: isolated Tariff and Resmî Gazete Özeti adapters.
+- `artifact.py`: contained paths, atomic date replacement, hashes and inventory.
+- `manifest.py`: versioned machine-readable contract.
+- `pipeline.py`: orchestration only.
+- `cli.py`: Istanbul-date CLI boundary.
 
-## Schedule
-GitHub cron runs daily at 04:00 UTC, equivalent to 07:00 Europe/Istanbul. Manual workflow dispatch accepts an optional `date` (`YYYY-MM-DD`) for backfills/tests.
+## Trust model
 
-## Google Drive authentication
-Use a Google service account JSON stored only in GitHub Actions secret `GDRIVE_SERVICE_ACCOUNT_JSON`. The service-account email must be granted access to the existing Drive root folder. No credential is committed to the repository.
+`resmigazete.gov.tr` is authoritative. Supporting sources may aid discovery and later analysis but are never legal evidence. An HTTP 200 response is insufficient: the collector also verifies the final host and expected file signature. TLS verification is attempted first; the existing certificate-chain workaround is allowed only after a recorded verification error.
+
+## Artifact
+
+The immutable handoff unit is `out/YYYY-MM-DD/`. A rerun stages a fresh directory and replaces the prior date only after the new artifact is complete. `manifest.json` exists for `PASS` and `BLOCKED`, has schema and artifact versions, and inventories every other file with SHA-256.
+
+## Excluded
+
+No AI analysis, report HTML, Google Drive API, mail delivery, recipients, or credentials are implemented here.

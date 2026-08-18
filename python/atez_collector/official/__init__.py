@@ -1,0 +1,1 @@
+"""Authoritative Resmî Gazete collection."""

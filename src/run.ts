@@ -54,9 +54,7 @@ export async function runDailyFetch(options: RunDailyFetchOptions): Promise<RunS
 
   let documentsFetched = 0;
   for (const document of documents) {
-    const outcome = await fetcher(document.url, {
-      allowBrowserFallback: document.extension === 'htm',
-    });
+    const outcome = await fetcher(document.url, { allowBrowserFallback: true });
     logs.push(...outcomeLogLines(`official-document:${document.id}`, outcome));
     let outputPath: string | undefined;
     if (outcome.success) {

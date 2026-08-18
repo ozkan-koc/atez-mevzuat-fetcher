@@ -7,9 +7,12 @@ interface FetchResourceOptions {
   allowBrowserFallback?: boolean;
 }
 
+const HTTP_TIMEOUT_MS = 20_000;
+
 async function defaultHttpFetch(url: string): Promise<BrowserFetchResult> {
   const response = await fetch(url, {
     redirect: 'follow',
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     headers: {
       'user-agent':
         'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36',
@@ -73,11 +76,11 @@ export async function fetchResource(
   const attempts: FetchAttempt[] = [];
   let fallbackReason: string | undefined;
 
+  const httpStartedAt = new Date().toISOString();
   try {
-    const startedAt = new Date().toISOString();
     const result = await httpFetch(url);
     const finishedAt = new Date().toISOString();
-    const attempt = attemptFromResult('fetch', startedAt, finishedAt, result);
+    const attempt = attemptFromResult('fetch', httpStartedAt, finishedAt, result);
     attempts.push(attempt);
     if (attempt.success) {
       return { url, success: true, method: 'fetch', ...result, attempts };
@@ -87,7 +90,7 @@ export async function fetchResource(
     fallbackReason = error instanceof Error ? error.message : String(error);
     attempts.push({
       method: 'fetch',
-      startedAt: new Date().toISOString(),
+      startedAt: httpStartedAt,
       finishedAt: new Date().toISOString(),
       success: false,
       error: fallbackReason,
@@ -95,11 +98,11 @@ export async function fetchResource(
   }
 
   if (allowBrowserFallback) {
+    const browserStartedAt = new Date().toISOString();
     try {
-      const startedAt = new Date().toISOString();
       const result = await browserFetch(url);
       const finishedAt = new Date().toISOString();
-      const attempt = attemptFromResult('playwright', startedAt, finishedAt, result);
+      const attempt = attemptFromResult('playwright', browserStartedAt, finishedAt, result);
       attempts.push(attempt);
       if (attempt.success) {
         return {
@@ -114,7 +117,7 @@ export async function fetchResource(
     } catch (error) {
       attempts.push({
         method: 'playwright',
-        startedAt: new Date().toISOString(),
+        startedAt: browserStartedAt,
         finishedAt: new Date().toISOString(),
         success: false,
         error: error instanceof Error ? error.message : String(error),

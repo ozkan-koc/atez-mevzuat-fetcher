@@ -1,88 +1,113 @@
-# ATEZ Mevzuat Fetcher
+# ATEZ Resmî Gazete Fetcher
 
-Zero-cost GitHub Actions fetcher for the ATEZ Mevzuat Radarı pipeline.
+Basit ve ücretsiz GitHub Actions tabanlı Resmî Gazete fetcher'ı.
 
-## What it does
+Şimdilik yalnız `resmigazete.gov.tr` hedeflenir. Mevzuat.gov.tr, Google Drive ve AI analiz katmanı bu sürümün kapsamı dışındadır.
 
-For a target Turkey date (`YYYY-MM-DD`), the fetcher:
+## Akış
 
-1. builds the official Resmî Gazete daily index URL,
-2. tries a normal HTTP fetch,
-3. falls back to Playwright/Chromium for HTML when needed,
-4. discovers same-day official HTML/PDF document links,
-5. downloads every discovered official document,
-6. probes `https://www.mevzuat.gov.tr/` as an additional official-source availability signal,
-7. writes detailed request attempts, manifests, and raw files under `out/YYYY-MM-DD/`,
-8. optionally uploads the run to the existing Google Drive `ATEZ-Mevzuat-Radari` root.
+Hedef Türkiye tarihi (`YYYY-MM-DD`) için:
 
-The fetcher performs no AI analysis and does not treat a failed source as verified.
+1. `https://www.resmigazete.gov.tr/DD.MM.YYYY` açılır.
+2. Sayfadaki yalnız ana Resmî Gazete `/eskiler/YYYY/MM/YYYYMMDD-*` HTML/PDF linkleri çıkarılır.
+3. İlan sayfaları ve başka tarihli linkler dışlanır.
+4. Bulunan her HTML/PDF ham byte olarak indirilir.
+5. Her request için ayrıntılı log ve manifest yazılır.
+6. GitHub Actions run çıktısı 14 gün artifact olarak saklanır.
 
-## Output
+## 18 Ağustos 2026 doğrulaması
+
+Gerçek GitHub-hosted Ubuntu runner üzerinde test edildi:
 
 ```text
-out/YYYY-MM-DD/
-  discovery-manifest.json
-  fetch-manifest.json
-  fetch-log.txt
-  raw/
-    YYYYMMDD-index.htm
-    YYYYMMDD-1.htm
-    YYYYMMDD-2.pdf
-    ...
-    mevzuat-home.htm
+Date:                 2026-08-18
+Daily page:           HTTP 200
+Documents discovered: 9
+Documents fetched:    9
+Status:               PASS
 ```
 
-Each request attempt records the URL, method (`fetch` / `playwright`), timestamps, status code when available, final URL, content type, byte count, errors, and fallback reason.
+İndirilen resmi belgeler:
 
-## Local commands
+```text
+20260818-1.htm
+20260818-2.htm
+20260818-3.htm
+20260818-4.pdf
+20260818-5.pdf
+20260818-6.htm
+20260818-7.htm
+20260818-8.pdf
+20260818-9.pdf
+```
+
+## TLS notu
+
+GitHub runner'daki Python `requests`, `resmigazete.gov.tr` için standart sertifika doğrulamasında şu hatayı üretti:
+
+```text
+CERTIFICATE_VERIFY_FAILED
+unable to get local issuer certificate
+```
+
+Fetcher önce TLS doğrulaması açık şekilde dener. Bu spesifik certificate-chain problemi görülür ve `verify=False` fallback başarılı olursa aynı run boyunca sonraki Resmî Gazete isteklerinde bu workaround yeniden kullanılır.
+
+Bu durum manifestte gizlenmez:
+
+```json
+{
+  "tls_verification": false,
+  "fallback_reason": "known_certificate_chain_workaround"
+}
+```
+
+Dolayısıyla bir dosyanın hangi URL'den ve hangi TLS yöntemiyle alındığı denetlenebilir.
+
+## Çıktı
+
+```text
+python/out/YYYY-MM-DD/
+  manifest.json
+  raw/
+    fihrist.html
+    YYYYMMDD-1.htm
+    YYYYMMDD-2.htm
+    ...
+    YYYYMMDD-9.pdf
+```
+
+`manifest.json` içinde her request için şunlar bulunur:
+
+- source URL
+- HTTP status
+- final URL
+- content type
+- byte size
+- elapsed time
+- TLS verification durumu
+- fallback nedeni
+- success/failure
+
+## Local kullanım
 
 ```bash
-npm install
-npx playwright install chromium
-npm test
-npm run typecheck
-npm run fetch -- 2026-08-18
+cd python
+pip install requests beautifulsoup4 pytest
+pytest -q
+python rg_fetch.py 2026-08-18
 ```
-
-Without a date, the CLI resolves the current date in `Europe/Istanbul`.
 
 ## GitHub Actions
 
-`.github/workflows/daily.yml` runs every day at `04:00 UTC`, corresponding to `07:00 Europe/Istanbul`, and also supports manual workflow dispatch with an optional historical date.
+Workflow: `.github/workflows/python-rg.yml`
 
-The workflow always uploads `out/` as a GitHub Actions artifact, including blocked runs, so failed official-source attempts remain inspectable.
+- Her gün `04:00 UTC` çalışır = `07:00 Europe/Istanbul`.
+- Manuel çalıştırmada geçmiş bir `YYYY-MM-DD` tarihi verilebilir.
+- Tarih boşsa `Europe/Istanbul` güncel tarihi kullanılır.
+- Pull request sırasında yalnız unit testler çalışır; Resmî Gazete'ye network isteği gönderilmez.
+- Gerçek scheduled/manual run çıktısı GitHub Actions artifact olarak 14 gün tutulur.
 
-## Google Drive
+## Status
 
-Drive upload is optional. When no Drive secret is configured, fetching still runs and the Actions artifact is retained.
-
-To enable Drive upload:
-
-1. Create a Google Cloud service account with Google Drive API access.
-2. Share the existing `ATEZ-Mevzuat-Radari` Drive root folder with the service-account email as an editor.
-3. Add the service-account JSON to the repository Actions secret `GDRIVE_SERVICE_ACCOUNT_JSON`.
-4. Optionally add `GDRIVE_ROOT_FOLDER_ID`. If omitted, the fetcher uses the existing ATEZ root folder ID configured in the CLI.
-
-The uploader creates/reuses this minimum structure:
-
-```text
-ATEZ-Mevzuat-Radari/
-  runs/
-    YYYY-MM-DD/
-      sources/
-        discovery-manifest.json
-        fetch-manifest.json
-        raw/
-      logs/
-        fetch-log.txt
-```
-
-Credentials are never written to the repository or output manifests.
-
-## Status behavior
-
-- `PASS`: official Resmî Gazete daily index was retrieved, at least one same-day official document was discovered, and every discovered official document was fetched.
-- `BLOCKED`: the index could not be retrieved, no official documents could be established, or at least one discovered official document could not be fetched.
-- `mevzuat.gov.tr` probe status is logged independently and does not override the Resmî Gazete run status.
-
-A browser fallback success does not hide a failed direct request; both attempts remain in `fetch-manifest.json` and `fetch-log.txt`.
+- `PASS`: günlük sayfa bulundu, en az bir ana Resmî Gazete belgesi keşfedildi ve keşfedilen belgelerin tamamı indirildi.
+- `BLOCKED`: günlük sayfa alınamadı, ana belge seti çıkarılamadı veya belgelerden en az biri indirilemedi.

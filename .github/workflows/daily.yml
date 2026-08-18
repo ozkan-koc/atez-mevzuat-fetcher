@@ -1,0 +1,52 @@
+name: ATEZ Daily Fetch
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Target date (YYYY-MM-DD). Empty means today in Europe/Istanbul.'
+        required: false
+        type: string
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - run: npm run typecheck
+
+      - name: Fetch official sources
+        id: fetch
+        continue-on-error: true
+        env:
+          TARGET_DATE: ${{ github.event_name == 'pull_request' && '2026-08-18' || inputs.date }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          GDRIVE_ROOT_FOLDER_ID: ${{ secrets.GDRIVE_ROOT_FOLDER_ID }}
+        run: npm run fetch
+
+      - name: Upload run evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: atez-fetch-${{ github.run_id }}
+          path: out/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail workflow when fetch is blocked
+        if: steps.fetch.outcome == 'failure'
+        run: exit 1

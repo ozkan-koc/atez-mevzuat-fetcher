@@ -9,24 +9,7 @@ permissions:
 
 jobs:
   fetch:
+    if: false
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-      - run: pip install requests beautifulsoup4 pytest
-      - name: Unit tests
-        working-directory: python
-        run: pytest -q
-      - name: Fetch Resmi Gazete 2026-08-17
-        working-directory: python
-        run: python rg_fetch.py '2026-08-17'
-      - name: Upload backfill evidence
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: resmi-gazete-2026-08-17-${{ github.run_id }}
-          path: python/out/
-          if-no-files-found: warn
-          retention-days: 14
+      - run: echo 'backfill completed; workflow disabled pending deletion'

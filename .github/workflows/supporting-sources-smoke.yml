@@ -1,0 +1,35 @@
+name: Supporting Sources Smoke
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'python/**'
+      - '.github/workflows/supporting-sources-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: pip install requests beautifulsoup4 pytest
+      - name: Unit tests
+        working-directory: python
+        run: pytest -q
+      - name: Fetch 2026-08-17 with supporting sources
+        working-directory: python
+        run: python rg_fetch.py 2026-08-17
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: supporting-sources-smoke-${{ github.run_id }}
+          path: python/out/2026-08-17/
+          if-no-files-found: warn
+          retention-days: 7

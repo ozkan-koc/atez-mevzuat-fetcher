@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import requests
+import urllib3
 from bs4 import BeautifulSoup
+from urllib3.exceptions import InsecureRequestWarning
 
 BASE = 'https://www.resmigazete.gov.tr'
 TIMEOUT = 20
@@ -62,24 +64,46 @@ def parse_fihrist(html: str, date: str) -> list[dict]:
     return items
 
 
+def _response_fields(response: requests.Response, started: float) -> dict:
+    return {
+        'success': response.ok and len(response.content) > 0,
+        'status': response.status_code,
+        'final_url': response.url,
+        'content_type': response.headers.get('content-type', ''),
+        'bytes': len(response.content),
+        'elapsed_ms': round((time.time() - started) * 1000),
+    }
+
+
 def request_with_log(session: requests.Session, url: str) -> tuple[requests.Response | None, dict]:
     started = time.time()
     record = {
         'url': url,
-        'started_at': datetime.utcnow().isoformat(timespec='milliseconds') + 'Z',
+        'started_at': datetime.now(UTC).isoformat(timespec='milliseconds'),
         'method': 'requests',
+        'tls_verification': True,
     }
+
     try:
-        response = session.get(url, timeout=TIMEOUT, allow_redirects=True)
-        record.update({
-            'success': response.ok and len(response.content) > 0,
-            'status': response.status_code,
-            'final_url': response.url,
-            'content_type': response.headers.get('content-type', ''),
-            'bytes': len(response.content),
-            'elapsed_ms': round((time.time() - started) * 1000),
-        })
+        response = session.get(url, timeout=TIMEOUT, allow_redirects=True, verify=True)
+        record.update(_response_fields(response, started))
         return response, record
+    except requests.exceptions.SSLError as exc:
+        record['fallback_reason'] = 'ssl_certificate_verification_failed'
+        record['verified_tls_error'] = f'{type(exc).__name__}: {exc}'
+        record['tls_verification'] = False
+        try:
+            urllib3.disable_warnings(InsecureRequestWarning)
+            response = session.get(url, timeout=TIMEOUT, allow_redirects=True, verify=False)
+            record.update(_response_fields(response, started))
+            return response, record
+        except Exception as fallback_exc:
+            record.update({
+                'success': False,
+                'error': f'{type(fallback_exc).__name__}: {fallback_exc}',
+                'elapsed_ms': round((time.time() - started) * 1000),
+            })
+            return None, record
     except Exception as exc:
         record.update({
             'success': False,
@@ -139,6 +163,10 @@ def run(date: str) -> int:
         'documents_fetched': sum(1 for d in documents if d['fetched']),
         'documents': documents,
         'requests': logs,
+        'warning': (
+            'Some requests may use TLS verification disabled only after a verified TLS chain failure. '
+            'See each request record tls_verification/fallback_reason.'
+        ),
     }
     (out_dir / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
 

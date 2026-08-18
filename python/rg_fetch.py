@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sys
 import time
-import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -11,6 +10,8 @@ from urllib.parse import urljoin, urlparse
 import requests
 import urllib3
 from bs4 import BeautifulSoup
+
+from supporting_sources import fetch_supporting_sources
 
 BASE = 'https://www.resmigazete.gov.tr'
 TIMEOUT = 20
@@ -96,12 +97,7 @@ def request_with_log(
 
     if not verify_tls:
         try:
-            response = session.get(
-                url,
-                timeout=TIMEOUT,
-                allow_redirects=True,
-                verify=False,
-            )
+            response = session.get(url, timeout=TIMEOUT, allow_redirects=True, verify=False)
             record.update(_response_record(response, started, False))
             record['fallback_reason'] = 'known_certificate_chain_workaround'
             return response, record
@@ -116,23 +112,13 @@ def request_with_log(
             return None, record
 
     try:
-        response = session.get(
-            url,
-            timeout=TIMEOUT,
-            allow_redirects=True,
-            verify=True,
-        )
+        response = session.get(url, timeout=TIMEOUT, allow_redirects=True, verify=True)
         record.update(_response_record(response, started, True))
         return response, record
     except requests.exceptions.SSLError as exc:
         verified_error = f'{type(exc).__name__}: {exc}'
         try:
-            response = session.get(
-                url,
-                timeout=TIMEOUT,
-                allow_redirects=True,
-                verify=False,
-            )
+            response = session.get(url, timeout=TIMEOUT, allow_redirects=True, verify=False)
             record.update(_response_record(response, started, False))
             record.update({
                 'fallback_reason': 'ssl_certificate_verification_failed',
@@ -205,10 +191,25 @@ def run(date: str) -> int:
         documents.append({**item, 'fetched': saved, 'fetch': log})
         time.sleep(0.75)
 
+    supporting = fetch_supporting_sources(date, out_dir, HEADERS)
+    print(json.dumps({
+        'supporting_sources': {
+            'tariff_status': supporting['tariff']['status'],
+            'tariff_items': len(supporting['tariff']['items']),
+            'resmi_gazete_ozeti_status': supporting['resmi_gazete_ozeti']['status'],
+            'resmi_gazete_ozeti_items': len(supporting['resmi_gazete_ozeti']['items']),
+        }
+    }, ensure_ascii=False), flush=True)
+
     manifest = {
         'date': date,
         'selected_source_url': selected_source_url,
         'candidate_urls': build_candidate_urls(date),
+        'source_policy': {
+            'primary_legal_evidence': 'resmigazete.gov.tr',
+            'supporting_sources': ['tariff.singlewindow.io', 'resmigazeteozeti.com'],
+            'supporting_sources_are_not_legal_evidence': True,
+        },
         'tls_policy': {
             'verified_first': True,
             'certificate_chain_workaround_used': not verify_tls,
@@ -218,6 +219,12 @@ def run(date: str) -> int:
         'documents_fetched': sum(1 for d in documents if d['fetched']),
         'documents': documents,
         'requests': logs,
+        'supporting_sources': {
+            'tariff_status': supporting['tariff']['status'],
+            'tariff_items': len(supporting['tariff']['items']),
+            'resmi_gazete_ozeti_status': supporting['resmi_gazete_ozeti']['status'],
+            'resmi_gazete_ozeti_items': len(supporting['resmi_gazete_ozeti']['items']),
+        },
     }
     (out_dir / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
 
@@ -226,6 +233,7 @@ def run(date: str) -> int:
         'selected_source_url': selected_source_url,
         'documents_discovered': manifest['documents_discovered'],
         'documents_fetched': manifest['documents_fetched'],
+        'supporting_sources': manifest['supporting_sources'],
         'status': 'PASS' if items and manifest['documents_fetched'] == len(items) else 'BLOCKED',
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)

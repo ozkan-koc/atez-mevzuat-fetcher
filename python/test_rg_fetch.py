@@ -10,12 +10,13 @@ def test_build_candidate_urls():
     ]
 
 
-def test_parse_fihrist_extracts_unique_same_day_links():
+def test_parse_fihrist_extracts_only_unique_same_day_main_gazette_links():
     html = '''
     <div class="fihrist-item mb-1"><a href="/eskiler/2026/08/20260818-1.htm">Kanun</a></div>
     <div class="fihrist-item mb-1"><a href="/eskiler/2026/08/20260818-2.pdf">Karar</a></div>
     <div class="fihrist-item mb-1"><a href="/eskiler/2026/08/20260818-1.htm">Tekrar</a></div>
     <div class="fihrist-item mb-1"><a href="/eskiler/2026/08/20260817-1.htm">Dün</a></div>
+    <div class="fihrist-item mb-1"><a href="/ilanlar/eskiilanlar/2026/08/20260818-3.htm">İlan</a></div>
     '''
     items = parse_fihrist(html, '2026-08-18')
     assert [item['url'] for item in items] == [
@@ -51,3 +52,17 @@ def test_request_retries_without_tls_verification_only_after_ssl_error():
     assert log['success'] is True
     assert log['tls_verification'] is False
     assert log['fallback_reason'] == 'ssl_certificate_verification_failed'
+
+
+def test_request_can_reuse_known_tls_workaround_without_retrying_verified_tls():
+    session = FakeSession()
+    response, log = request_with_log(
+        session,
+        'https://www.resmigazete.gov.tr/eskiler/2026/08/20260818-1.htm',
+        verify_tls=False,
+    )
+    assert response is not None
+    assert session.verify_values == [False]
+    assert log['success'] is True
+    assert log['tls_verification'] is False
+    assert log['fallback_reason'] == 'known_certificate_chain_workaround'

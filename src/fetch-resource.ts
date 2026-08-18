@@ -37,11 +37,19 @@ async function defaultBrowserFetch(url: string): Promise<BrowserFetchResult> {
       timeout: 45_000,
     });
     if (!response) throw new Error('Browser navigation returned no response');
+    const contentType = response.headers()['content-type'] ?? '';
+    let bytes: Buffer;
+    try {
+      bytes = await response.body();
+    } catch {
+      if (!contentType.toLowerCase().includes('text/html')) throw new Error('Could not read browser response body');
+      bytes = Buffer.from(await page.content(), 'utf8');
+    }
     return {
       status: response.status(),
-      finalUrl: page.url(),
-      contentType: response.headers()['content-type'] ?? 'text/html',
-      bytes: Buffer.from(await page.content(), 'utf8'),
+      finalUrl: response.url(),
+      contentType,
+      bytes,
     };
   } finally {
     await browser.close();

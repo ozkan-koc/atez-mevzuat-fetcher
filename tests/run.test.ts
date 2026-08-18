@@ -36,8 +36,12 @@ describe('daily run orchestration', () => {
     const indexUrl = 'https://www.resmigazete.gov.tr/eskiler/2026/08/20260818.htm';
     const htmlUrl = 'https://www.resmigazete.gov.tr/eskiler/2026/08/20260818-1.htm';
     const pdfUrl = 'https://www.resmigazete.gov.tr/eskiler/2026/08/20260818-2.pdf';
+    const pdfFallbackFlags: boolean[] = [];
 
-    const fetcher = async (url: string): Promise<FetchOutcome> => {
+    const fetcher = async (
+      url: string,
+      options?: { allowBrowserFallback?: boolean },
+    ): Promise<FetchOutcome> => {
       if (url === indexUrl) {
         return success(
           url,
@@ -46,7 +50,13 @@ describe('daily run orchestration', () => {
         );
       }
       if (url === htmlUrl) return success(url, 'text/html', '<html>law</html>');
-      if (url === pdfUrl) return success(url, 'application/pdf', '%PDF-test');
+      if (url === pdfUrl) {
+        pdfFallbackFlags.push(options?.allowBrowserFallback === true);
+        if (!options?.allowBrowserFallback) {
+          return { url, success: false, bytes: Buffer.alloc(0), attempts: [] };
+        }
+        return success(url, 'application/pdf', '%PDF-test');
+      }
       if (url === 'https://www.mevzuat.gov.tr/') {
         return success(url, 'text/html', '<html>mevzuat</html>');
       }
@@ -58,6 +68,7 @@ describe('daily run orchestration', () => {
     expect(summary.status).toBe('PASS');
     expect(summary.documentsDiscovered).toBe(2);
     expect(summary.documentsFetched).toBe(2);
+    expect(pdfFallbackFlags).toEqual([true]);
 
     const runDir = join(outRoot, '2026-08-18');
     const discovery = JSON.parse(await readFile(join(runDir, 'discovery-manifest.json'), 'utf8'));

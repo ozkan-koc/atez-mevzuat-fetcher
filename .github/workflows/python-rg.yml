@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   test-and-fetch:
@@ -53,6 +54,7 @@ jobs:
         run: python rg_fetch.py "$TARGET_DATE"
 
       - name: Upload evidence and diagnostics
+        id: evidence
         if: github.event_name != 'pull_request' && always()
         uses: actions/upload-artifact@v6
         with:
@@ -60,3 +62,26 @@ jobs:
           path: python/out/
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Expose scheduled run identity to analyzer
+        if: github.event_name == 'schedule' && always()
+        uses: actions/github-script@v8
+        env:
+          TARGET_DATE: ${{ env.TARGET_DATE }}
+          ARTIFACT_ID: ${{ steps.evidence.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.evidence.outputs.artifact-digest }}
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const artifactId = process.env.ARTIFACT_ID || 'none';
+            const digest = (process.env.ARTIFACT_DIGEST || '').replace(/^sha256:/, '');
+            const description = `run=${context.runId} artifact=${artifactId} sha256=${digest.slice(0, 24)}`;
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
+              context: `atez-collector/schedule/${process.env.TARGET_DATE}`,
+              description: description.slice(0, 140),
+              target_url: runUrl,
+            });

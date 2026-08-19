@@ -23,6 +23,35 @@ jobs:
   test-and-fetch:
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve Turkey target date
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            echo "TARGET_DATE=${{ inputs.date }}" >> "$GITHUB_ENV"
+          else
+            echo "TARGET_DATE=$(TZ=Europe/Istanbul date +%F)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Register scheduled run as pending
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        uses: actions/github-script@v8
+        env:
+          TARGET_DATE: ${{ env.TARGET_DATE }}
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: `atez-collector/schedule/${process.env.TARGET_DATE}`,
+              description: `run=${context.runId} status=pending`,
+              target_url: runUrl,
+            });
+
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
@@ -37,16 +66,6 @@ jobs:
       - name: Unit and integration tests
         working-directory: python
         run: pytest
-
-      - name: Resolve Turkey target date
-        if: github.event_name != 'pull_request'
-        shell: bash
-        run: |
-          if [ -n "${{ inputs.date }}" ]; then
-            echo "TARGET_DATE=${{ inputs.date }}" >> "$GITHUB_ENV"
-          else
-            echo "TARGET_DATE=$(TZ=Europe/Istanbul date +%F)" >> "$GITHUB_ENV"
-          fi
 
       - name: Collect evidence
         if: github.event_name != 'pull_request'
@@ -63,24 +82,27 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Expose scheduled run identity to analyzer
+      - name: Finalize scheduled run registry
         if: github.event_name == 'schedule' && always()
+        continue-on-error: true
         uses: actions/github-script@v8
         env:
           TARGET_DATE: ${{ env.TARGET_DATE }}
           ARTIFACT_ID: ${{ steps.evidence.outputs.artifact-id }}
           ARTIFACT_DIGEST: ${{ steps.evidence.outputs.artifact-digest }}
+          JOB_STATUS: ${{ job.status }}
         with:
           script: |
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const artifactId = process.env.ARTIFACT_ID || 'none';
             const digest = (process.env.ARTIFACT_DIGEST || '').replace(/^sha256:/, '');
+            const state = process.env.JOB_STATUS === 'success' ? 'success' : 'failure';
             const description = `run=${context.runId} artifact=${artifactId} sha256=${digest.slice(0, 24)}`;
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
               sha: context.sha,
-              state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
+              state,
               context: `atez-collector/schedule/${process.env.TARGET_DATE}`,
               description: description.slice(0, 140),
               target_url: runUrl,
